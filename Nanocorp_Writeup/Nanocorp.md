@@ -1,4 +1,4 @@
-# NanoCorp - HackTheBox Season 9 (Hard/Windows) Writeup
+# NanoCorp 
 
 **Difficulty:** Hard  
 **OS:** Windows  
